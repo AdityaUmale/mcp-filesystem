@@ -26,34 +26,69 @@ function App() {
     if (!prompt.trim()) return;
     setLoading(true);
     try {
-      // Simple prompt parsing for demo
-      const lower = prompt.toLowerCase();
       let result;
-      if (lower.includes('create') && lower.includes('file')) {
-        const filename = prompt.match(/(\w+\.\w+)/)?.[1] || 'newfile.txt';
+      const createMatch = prompt.match(/create\s+file\s+((?:[\w]+\/)*[\w]+\.\w+)/i);
+      if (createMatch) {
+        const filename = createMatch[1];
         const contentMatch = prompt.match(/(?:with content|containing)\s+(.+)/i);
-        const content = contentMatch?.[1] || 'Default content';
+        const content = contentMatch ? contentMatch[1] : 'Default content';
         result = await client.createFile(filename, content);
         setResponse(result.content[0].text);
         await loadFiles();
         setPrompt('');
-      } else if (lower.includes('delete') && lower.includes('file')) {
-        const filename = prompt.match(/(\w+\.\w+)/)?.[1];
-        if (filename) {
+      } else {
+        const deleteMatch = prompt.match(/delete\s+file\s+((?:[\w]+\/)*[\w]+\.\w+)/i);
+        if (deleteMatch) {
+          const filename = deleteMatch[1];
           result = await client.deleteFile(filename);
           setResponse(result.content[0].text);
           await loadFiles();
           setPrompt('');
         } else {
-          setResponse('File not found in prompt');
+          const editMatch = prompt.match(/edit\s+file\s+((?:[\w]+\/)*[\w]+\.\w+)\s+(replace|append)/i);
+          if (editMatch) {
+            const filename = editMatch[1];
+            const editType = editMatch[2].toLowerCase();
+            if (editType === 'replace') {
+              const replaceMatch = prompt.match(/replace\s+'(.+?)'\s+with\s+'(.+?)'/i);
+              if (replaceMatch) {
+                const oldText = replaceMatch[1];
+                const newText = replaceMatch[2];
+                const fileContentRes = await client.readFile(filename);
+                let content = fileContentRes.content[0].text.replace(/^.*?\n\n/, '');
+                content = content.replace(new RegExp(oldText, 'g'), newText);
+                await client.editFile(filename, content);
+                setResponse(`Replaced '${oldText}' with '${newText}' in ${filename}`);
+              } else {
+                setResponse('Invalid replace command format');
+              }
+            } else if (editType === 'append') {
+              const appendMatch = prompt.match(/append\s+'(.+?)'/i);
+              if (appendMatch) {
+                const appendText = appendMatch[1];
+                const fileContentRes = await client.readFile(filename);
+                let content = fileContentRes.content[0].text.replace(/^.*?\n\n/, '');
+                content += `\n${appendText}`;
+                await client.editFile(filename, content);
+                setResponse(`Appended '${appendText}' to ${filename}`);
+              } else {
+                setResponse('Invalid append command format');
+              }
+            } else {
+              setResponse('Unsupported edit operation');
+            }
+            await loadFiles();
+            setPrompt('');
+          } else if (prompt.toLowerCase().includes('list')) {
+            result = await client.listFiles();
+            setResponse(result.content[0].text);
+            setPrompt('');
+            await loadFiles();
+          } else {
+            setResponse('Try: "create file subfolder/test.txt with content hello" or "list files" or "edit file subfolder/test.txt replace \'old\' with \'new\'"');
+            setPrompt('');
+          }
         }
-      } else if (lower.includes('list')) {
-        result = await client.listFiles();
-        setResponse(result.content[0].text);
-        setPrompt('');
-        await loadFiles();
-      } else {
-        setResponse('Try: "create file test.txt with content hello" or "list files"');
       }
     } catch (error: any) {
       setResponse(`Error: ${error.message || error}`);
@@ -79,10 +114,11 @@ function App() {
     if (!e.target.files) return;
     for (const file of Array.from(e.target.files)) {
       const text = await file.text();
-      await client.createFile(file.name, text);
+      const relativePath = file.webkitRelativePath || file.name;
+      await client.createFile(relativePath, text);
     }
     await loadFiles();
-    setResponse('Files uploaded successfully');
+    setResponse('Folder uploaded successfully');
   };
 
   return (
@@ -93,11 +129,12 @@ function App() {
           <h1 className="text-3xl font-bold text-gray-800">MCP Filesystem Manager</h1>
           <p className="text-gray-600 mt-2">Manage files using natural language prompts</p>
         </div>
-        {/* File Upload Section */}
+        {/* Folder Upload Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Upload Files</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Upload Folder</label>
           <input
             type="file"
+            {...({ webkitdirectory: "" } as any)}
             multiple
             onChange={handleFileUpload}
             className="mb-2"
@@ -114,7 +151,7 @@ function App() {
                 type="text"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="e.g., 'create file hello.txt with content Hello World'"
+                placeholder="e.g., 'create file subfolder/hello.txt with content Hello World' or 'edit file subfolder/hello.txt replace 'Hello' with 'Hi''"
                 className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -127,75 +164,46 @@ function App() {
             </button>
           </form>
           {response && (
-            <div className={`mt-4 p-3 rounded-md ${
-              response.includes('Error') ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-green-100 text-green-700 border border-green-200'
-            }`}>
-              {response}
+            <div className="mt-4 p-4 bg-gray-50 rounded-md">
+              <pre className="text-sm text-gray-800 whitespace-pre-wrap">{response}</pre>
             </div>
           )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* File List */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-semibold mb-4">Files ({files.length})</h2>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {files.length === 0 ? (
-                <p className="text-gray-500 text-center py-4">No files yet. Create one using a prompt!</p>
-              ) : (
-                files.map((file) => (
-                  <div
-                    key={file}
-                    onClick={() => handleFileSelect(file)}
-                    className={`p-3 rounded cursor-pointer transition-colors ${
-                      selectedFile === file 
-                        ? 'bg-blue-100 border-2 border-blue-300' 
-                        : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
-                    }`}
-                  >
-                    <div className="font-medium">{file}</div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          {/* File Editor */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-semibold mb-4">
-              {selectedFile ? `Edit: ${selectedFile}` : 'Select a file to edit'}
-            </h2>
-            {selectedFile ? (
-              <div className="space-y-4">
-                <textarea
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                  rows={10}
-                  placeholder="File content..."
-                />
-                <button
-                  onClick={handleSaveFile}
-                  className="bg-green-500 hover:bg-green-600 text-black px-4 py-2 rounded-md transition-colors"
-                >
-                  Save Changes
-                </button>
-              </div>
-            ) : (
-              <div className="text-gray-500 text-center py-8">
-                Click on a file from the list to start editing
-              </div>
-            )}
-          </div>
-        </div>
-        {/* Instructions */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="font-semibold text-blue-800 mb-2">Try these prompts:</h3>
-          <ul className="text-blue-700 text-sm space-y-1">
-            <li>• "create file readme.md with content This is a readme file"</li>
-            <li>• "create file script.js with content console.log('hello')"</li>
-            <li>• "list files"</li>
-            <li>• "delete file readme.md"</li>
+        {/* File Explorer */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4">Files</h2>
+          <ul className="space-y-2">
+            {files.map((file) => (
+              <li
+                key={file}
+                onClick={() => handleFileSelect(file)}
+                className={`p-2 rounded-md cursor-pointer ${
+                  selectedFile === file ? 'bg-blue-100' : 'hover:bg-gray-100'
+                }`}
+              >
+                {file}
+              </li>
+            ))}
           </ul>
         </div>
+        {/* File Editor */}
+        {selectedFile && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-xl font-semibold text-gray-800 mb-4">Edit: {selectedFile}</h2>
+            <textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              className="w-full h-64 p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="File content..."
+            />
+            <button
+              onClick={handleSaveFile}
+              className="mt-4 bg-green-500 hover:bg-green-600 text-black px-6 py-2 rounded-md transition-colors"
+            >
+              Save
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

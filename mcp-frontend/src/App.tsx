@@ -75,6 +75,16 @@ function App() {
     await loadFiles();
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    for (const file of Array.from(e.target.files)) {
+      const text = await file.text();
+      await client.createFile(file.name, text);
+    }
+    await loadFiles();
+    setResponse('Files uploaded successfully');
+  };
+
   return (
     <div className="min-h-screen min-w-screen bg-gray-100 p-4">
       <div className="max-w-4xl mx-auto space-y-6">
@@ -82,6 +92,16 @@ function App() {
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-800">MCP Filesystem Manager</h1>
           <p className="text-gray-600 mt-2">Manage files using natural language prompts</p>
+        </div>
+        {/* File Upload Section */}
+        <div className="bg-white rounded-lg shadow p-6 mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">Upload Files</label>
+          <input
+            type="file"
+            multiple
+            onChange={handleFileUpload}
+            className="mb-2"
+          />
         </div>
         {/* Prompt Section */}
         <div className="bg-white rounded-lg shadow p-6">
@@ -101,7 +121,7 @@ function App() {
             <button
               type="submit"
               disabled={loading}
-              className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white px-6 py-2 rounded-md transition-colors"
+              className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-black px-6 py-2 rounded-md transition-colors"
             >
               {loading ? 'Processing...' : 'Execute'}
             </button>
